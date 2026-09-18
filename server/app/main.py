@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.graph import campusgrid_graph
+
 from app.schemas import (
     OptimizeRequest,
     OptimizeResponse,
@@ -9,22 +11,9 @@ from app.schemas import (
     HourlyPlanEntry,
 )
 
-from app.llm.interpreter import interpret_operator_notes
-
-from app.guardrails.validator import (
-    validate_directives,
-    GuardrailError,
-)
-
-from app.optimizer.optimizer import (
-    optimize_schedule,
-    OptimizationError,
-)
-
-from app.validation.plan_validator import (
-    validate_plan,
-    PlanValidationError,
-)
+from app.guardrails.validator import GuardrailError
+from app.optimizer.optimizer import OptimizationError
+from app.validation.plan_validator import PlanValidationError
 
 
 # =========================================================
@@ -33,18 +22,17 @@ from app.validation.plan_validator import (
 
 app = FastAPI(
     title="CampusGrid",
-    description=(
-        "LLM-assisted campus energy optimization API"
-    ),
+    description="LLM-assisted campus energy optimization API",
     version="1.0.0",
 )
 
 
 # =========================================================
-# REQUEST VALIDATION ERROR
+# REQUEST VALIDATION ERROR HANDLER
 #
-# FastAPI normally returns 422 automatically.
-# GridWise requires structurally invalid requests to use 400.
+# FastAPI normally returns HTTP 422 for request validation.
+# CampusGrid returns HTTP 400 for malformed or structurally
+# invalid requests.
 # =========================================================
 
 @app.exception_handler(RequestValidationError)
@@ -52,11 +40,12 @@ async def request_validation_handler(
     request: Request,
     exc: RequestValidationError,
 ):
-
     return JSONResponse(
         status_code=400,
         content={
-            "detail": "Malformed or structurally invalid request."
+            "detail": (
+                "Malformed or structurally invalid request."
+            )
         },
     )
 
@@ -67,7 +56,6 @@ async def request_validation_handler(
 
 @app.get("/")
 def root():
-
     return {
         "service": "CampusGrid",
         "status": "running",
@@ -80,7 +68,6 @@ def root():
 
 @app.get("/health")
 def health():
-
     return {
         "status": "ok"
     }
@@ -97,57 +84,51 @@ def health():
 def optimize_energy(
     request: OptimizeRequest
 ):
-
     try:
 
-        # -------------------------------------------------
+        # =================================================
         # STEP 1
-        # LLM interprets operator notes
-        # -------------------------------------------------
+        # Run complete CampusGrid LangGraph workflow
+        #
+        # request
+        #   ↓
+        # Gemini interpretation
+        #   ↓
+        # deterministic guardrails
+        #   ↓
+        # PuLP optimizer
+        #   ↓
+        # final plan validation
+        # =================================================
 
-        llm_result = interpret_operator_notes(
-            request
+        graph_result = campusgrid_graph.invoke(
+            {
+                "request": request
+            }
         )
 
-        # -------------------------------------------------
+        # =================================================
         # STEP 2
-        # Deterministic guardrail validates LLM output
-        # -------------------------------------------------
+        # Extract validated directive interpretations
+        # =================================================
 
-        validated_directives = (
-            validate_directives(
-                request,
-                llm_result,
-            )
-        )
+        validated_directives = graph_result[
+            "validated_directives"
+        ]
 
-        # -------------------------------------------------
+        # =================================================
         # STEP 3
-        # Mathematical optimization
-        # -------------------------------------------------
+        # Extract optimization result
+        # =================================================
 
-        optimization_result = (
-            optimize_schedule(
-                request,
-                validated_directives,
-            )
-        )
+        optimization_result = graph_result[
+            "optimization_result"
+        ]
 
-        # -------------------------------------------------
+        # =================================================
         # STEP 4
-        # Independently validate final plan
-        # -------------------------------------------------
-
-        validate_plan(
-            request,
-            validated_directives,
-            optimization_result,
-        )
-
-        # -------------------------------------------------
-        # STEP 5
-        # Convert directives to API models
-        # -------------------------------------------------
+        # Convert directives to official API schema
+        # =================================================
 
         directive_interpretation = [
             DirectiveInterpretation(
@@ -157,10 +138,10 @@ def optimize_energy(
             in validated_directives.directives
         ]
 
-        # -------------------------------------------------
-        # STEP 6
-        # Convert hourly plan to API models
-        # -------------------------------------------------
+        # =================================================
+        # STEP 5
+        # Convert hourly plan to official API schema
+        # =================================================
 
         hourly_plan = [
             HourlyPlanEntry(
@@ -172,10 +153,10 @@ def optimize_energy(
             ]
         ]
 
-        # -------------------------------------------------
-        # STEP 7
-        # Deterministic human-readable summary
-        # -------------------------------------------------
+        # =================================================
+        # STEP 6
+        # Count applicable directives
+        # =================================================
 
         applicable_count = sum(
             1
@@ -183,6 +164,11 @@ def optimize_energy(
             in validated_directives.directives
             if directive.applies
         )
+
+        # =================================================
+        # STEP 7
+        # Deterministic human-readable plan summary
+        # =================================================
 
         plan_summary = (
             f"CampusGrid optimized the 24-hour schedule "
@@ -194,10 +180,10 @@ def optimize_energy(
             f"{optimization_result['total_cost_bdt']:.2f} BDT."
         )
 
-        # -------------------------------------------------
+        # =================================================
         # STEP 8
-        # Official API response
-        # -------------------------------------------------
+        # Return official response
+        # =================================================
 
         return OptimizeResponse(
             scenario_id=request.scenario_id,
@@ -230,7 +216,7 @@ def optimize_energy(
         )
 
     # =====================================================
-    # SAFE FAILURES
+    # SAFE ERROR HANDLING
     # =====================================================
 
     except GuardrailError:
