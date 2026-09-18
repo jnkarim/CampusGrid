@@ -1,6 +1,6 @@
 from app.llm.interpreter import interpret_operator_notes
 from app.schemas import OptimizeRequest
-
+from app.guardrails.validator import validate_directives
 
 hours = []
 
@@ -43,6 +43,13 @@ request = OptimizeRequest(
 
 result = interpret_operator_notes(request)
 
-print(
-    result.model_dump_json(indent=2)
+validated_result = validate_directives(
+    request,
+    result
 )
+
+print(
+    validated_result.model_dump_json(indent=2)
+)
+
+print("\nGUARDRAIL VALIDATION PASSED")
