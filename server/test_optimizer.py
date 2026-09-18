@@ -2,6 +2,7 @@ from app.guardrails.validator import validate_directives
 from app.llm.interpreter import interpret_operator_notes
 from app.optimizer.optimizer import optimize_schedule
 from app.schemas import OptimizeRequest
+from app.validation.plan_validator import validate_plan
 
 
 hours = []
@@ -104,4 +105,14 @@ print(
 print(
     "Peak grid:",
     result["peak_grid_kwh"],
+)
+
+validate_plan(
+    request,
+    validated,
+    result,
+)
+
+print(
+    "\nFINAL PLAN VALIDATION PASSED"
 )
